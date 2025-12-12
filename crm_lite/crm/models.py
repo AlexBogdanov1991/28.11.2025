@@ -14,7 +14,6 @@ class User(AbstractUser):
     )
     is_company_owner = models.BooleanField(default=False, verbose_name='Владелец компании')
 
-    # Переопределяем поля для использования email как основного идентификатора
     username = None
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']
@@ -28,20 +27,9 @@ class User(AbstractUser):
 
 
 class Company(models.Model):
-    inn = models.CharField(
-        max_length=12,
-        unique=True,
-        verbose_name='ИНН'
-    )
-    name = models.CharField(
-        max_length=255,
-        unique=True,
-        verbose_name='Название компании'
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='Дата создания'
-    )
+    inn = models.CharField(max_length=12, unique=True, verbose_name='ИНН')
+    name = models.CharField(max_length=255, unique=True, verbose_name='Название компании')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
 
     class Meta:
         verbose_name = 'Компания'
@@ -52,16 +40,9 @@ class Company(models.Model):
 
 
 class Storage(models.Model):
-    company = models.OneToOneField(
-        Company,
-        on_delete=models.CASCADE,
-        verbose_name='Компания'
-    )
+    company = models.OneToOneField(Company, on_delete=models.CASCADE, verbose_name='Компания')
     address = models.TextField(verbose_name='Адрес склада')
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='Дата создания'
-    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
 
     class Meta:
         verbose_name = 'Склад'
@@ -72,13 +53,12 @@ class Storage(models.Model):
 
 
 class Supplier(models.Model):
-    company = models.ForeignKey(
-        Company,
-        on_delete=models.CASCADE,
-        verbose_name='Компания'
-    )
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, verbose_name='Компания')
     name = models.CharField(max_length=255, verbose_name='Название поставщика')
     inn = models.CharField(max_length=12, verbose_name='ИНН поставщика')
+    contact_person = models.CharField(max_length=255, blank=True, verbose_name='Контактное лицо')
+    phone = models.CharField(max_length=20, blank=True, verbose_name='Телефон')
+    email = models.EmailField(blank=True, verbose_name='Email')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
 
     class Meta:
@@ -91,13 +71,10 @@ class Supplier(models.Model):
 
 
 class Product(models.Model):
-    storage = models.ForeignKey(
-        Storage,
-        on_delete=models.CASCADE,
-        verbose_name='Склад'
-    )
+    storage = models.ForeignKey(Storage, on_delete=models.CASCADE, verbose_name='Склад')
     name = models.CharField(max_length=255, verbose_name='Название товара')
     description = models.TextField(blank=True, verbose_name='Описание товара')
+    sku = models.CharField(max_length=100, unique=True, verbose_name='Артикул')
     quantity = models.IntegerField(
         default=0,
         validators=[MinValueValidator(0)],
@@ -115,81 +92,62 @@ class Product(models.Model):
         validators=[MinValueValidator(0)],
         verbose_name='Цена продажи'
     )
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')
 
     class Meta:
         verbose_name = 'Товар'
         verbose_name_plural = 'Товары'
+        ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.name} ({self.quantity} шт.)"
+        return f"{self.name} (Арт: {self.sku})"
 
 
 class Supply(models.Model):
-    supplier = models.ForeignKey(
-        Supplier,
-        on_delete=models.CASCADE,
-        verbose_name='Поставщик'
-    )
+    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, verbose_name='Поставщик')
     delivery_date = models.DateField(verbose_name='Дата поставки')
-    created_by = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        verbose_name='Создатель поставки'
-    )
+    invoice_number = models.CharField(max_length=100, blank=True, verbose_name='Номер накладной')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='Создатель поставки')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
+    notes = models.TextField(blank=True, verbose_name='Примечания')
 
     class Meta:
         verbose_name = 'Поставка'
         verbose_name_plural = 'Поставки'
+        ordering = ['-delivery_date']
 
-    def __str__(self): return f"Поставка от {self.supplier.name} ({self.delivery_date})"
+    def __str__(self):
+        return f"Поставка #{self.id} от {self.supplier.name} ({self.delivery_date})"
+
+    def total_cost(self):
+        total = 0
+        for item in self.supplyproduct_set.all():
+            total += item.product.purchase_price * item.quantity
+        return total
 
 class SupplyProduct(models.Model):
-    supply = models.ForeignKey(Supply, on_delete=models.CASCADE)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    quantity = models.IntegerField(validators=[MinValueValidator(1)])
+    supply = models.ForeignKey(Supply, on_delete=models.CASCADE, verbose_name='Поставка')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, verbose_name='Товар')
+    quantity = models.IntegerField(
+        validators=[MinValueValidator(1)],
+        verbose_name='Количество'
+    )
+    purchase_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+        verbose_name='Цена закупки'
+    )
 
     class Meta:
         verbose_name = 'Товар в поставке'
         verbose_name_plural = 'Товары в поставках'
         unique_together = ['supply', 'product']
 
-class Sale(models.Model):
-    company = models.ForeignKey(
-        Company,
-        on_delete=models.CASCADE,
-        verbose_name='Компания'
-    )
-    buyer_name = models.CharField(max_length=255, verbose_name='Имя покупателя')
-    created_by = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        verbose_name='Создатель продажи'
-    )
-    discount = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=0,
-        validators=[MinValueValidator(0)],
-        verbose_name='Скидка (%)'
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата продажи')
-
-    class Meta:
-        verbose_name = 'Продажа'
-        verbose_name_plural = 'Продажи'
-
     def __str__(self):
-        return f"Продажа #{self.id} - {self.buyer_name}"
+        return f"{self.product.name} x {self.quantity}"
 
-class ProductSale(models.Model):
-    sale = models.ForeignKey(Sale, on_delete=models.CASCADE)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    quantity = models.IntegerField(validators=[MinValueValidator(1)])
-    sale_price = models.DecimalField(max_digits=10, decimal_places=2)
-
-    class Meta:
-        verbose_name = 'Товар в продаже'
-        verbose_name_plural = 'Товары в продажах'
-        unique_together = ['sale', 'product']
+    def total_cost(self):
+        return self.purchase_price * self.quantity
