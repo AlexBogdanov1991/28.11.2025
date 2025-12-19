@@ -151,3 +151,83 @@ class SupplyProduct(models.Model):
 
     def total_cost(self):
         return self.purchase_price * self.quantity
+
+
+class Sale(models.Model):
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        verbose_name='Компания'
+    )
+    buyer_name = models.CharField(max_length=255, verbose_name='Имя покупателя')
+    sale_date = models.DateField(auto_now_add=True, verbose_name='Дата продажи')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='Создатель продажи'
+    )
+    discount = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name='Скидка (%)'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
+
+    class Meta:
+        verbose_name = 'Продажа'
+        verbose_name_plural = 'Продажи'
+        ordering = ['-sale_date', '-created_at']
+
+    def __str__(self):
+        return f"Продажа #{self.id} - {self.buyer_name}"
+
+    def total_amount(self):
+        """Общая сумма продажи без скидки"""
+        total = 0
+        for item in self.productsale_set.all():
+            total += item.quantity * item.sale_price
+        return total
+
+    def discount_amount(self):
+        """Сумма скидки"""
+        return self.total_amount() * (self.discount / 100)
+
+    def final_amount(self):
+        """Итоговая сумма со скидкой"""
+        return self.total_amount() - self.discount_amount()
+
+    def profit(self):
+        """Чистая прибыль с продажи"""
+        profit = 0
+        for item in self.productsale_set.all():
+            product = item.product
+            profit += item.quantity * (item.sale_price - product.purchase_price)
+        return profit * (1 - self.discount / 100)
+
+
+class ProductSale(models.Model):
+    sale = models.ForeignKey(Sale, on_delete=models.CASCADE, verbose_name='Продажа')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, verbose_name='Товар')
+    quantity = models.IntegerField(
+        validators=[MinValueValidator(1)],
+        verbose_name='Количество'
+    )
+    sale_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+        verbose_name='Цена продажи'
+    )
+
+    class Meta:
+        verbose_name = 'Товар в продаже'
+        verbose_name_plural = 'Товары в продажах'
+        unique_together = ['sale', 'product']
+
+    def __str__(self):
+        return f"{self.product.name} x {self.quantity}"
+
+    def total_price(self):
+        return self.quantity * self.sale_price

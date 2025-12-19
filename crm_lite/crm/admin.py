@@ -2,6 +2,8 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.utils.html import format_html
 from .models import User, Company, Storage, Supplier, Product, Supply, SupplyProduct
+from .models import ProductSale
+from .models import Sale
 
 
 @admin.register(User)
@@ -118,3 +120,65 @@ class SupplyProductAdmin(admin.ModelAdmin):
     def total_cost(self, obj):
         return obj.total_cost()
     total_cost.short_description = 'Общая стоимость'
+
+
+class ProductSaleInline(admin.TabularInline):
+    model = ProductSale
+    extra = 0
+    readonly_fields = ('total_price',)
+    fields = ('product', 'quantity', 'sale_price', 'total_price')
+
+    def total_price(self, obj):
+        if obj.id:
+            return obj.total_price()
+        return "—"
+
+    total_price.short_description = 'Общая стоимость'
+
+
+@admin.register(Sale)
+class SaleAdmin(admin.ModelAdmin):
+    list_display = ('id', 'buyer_name', 'company', 'sale_date', 'created_by',
+                    'total_amount_display', 'final_amount_display',
+                    'profit_display', 'created_at')
+    list_filter = ('company', 'sale_date', 'created_at')
+    search_fields = ('buyer_name', 'company__name', 'created_by__email')
+    inlines = [ProductSaleInline]
+    readonly_fields = ('created_by', 'created_at')
+
+    fieldsets = (
+        (None, {'fields': ('company', 'buyer_name', 'sale_date', 'created_by', 'discount')}),
+        ('Дополнительно', {'fields': ('created_at',)}),
+    )
+
+    def total_amount_display(self, obj):
+        return f"{obj.total_amount():.2f} руб."
+
+    total_amount_display.short_description = 'Сумма'
+
+    def final_amount_display(self, obj):
+        return f"{obj.final_amount():.2f} руб."
+
+    final_amount_display.short_description = 'Итог со скидкой'
+
+    def profit_display(self, obj):
+        return f"{obj.profit():.2f} руб."
+
+    profit_display.short_description = 'Прибыль'
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(ProductSale)
+class ProductSaleAdmin(admin.ModelAdmin):
+    list_display = ('sale', 'product', 'quantity', 'sale_price', 'total_price')
+    list_filter = ('sale__company', 'sale__sale_date')
+    search_fields = ('product__name', 'product__sku', 'sale__buyer_name')
+
+    def total_price(self, obj):
+        return obj.total_price()
+
+    total_price.short_description = 'Общая стоимость'

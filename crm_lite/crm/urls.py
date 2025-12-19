@@ -6,6 +6,7 @@ router = DefaultRouter()
 router.register(r'suppliers', views.SupplierViewSet, basename='supplier')
 router.register(r'products', views.ProductViewSet, basename='product')
 router.register(r'supplies', views.SupplyViewSet, basename='supply')
+router.register(r'sales', views.SaleViewSet, basename='sale')
 
 urlpatterns = [
     path('auth/register/', views.UserRegistrationView.as_view(), name='register'),
@@ -24,4 +25,7 @@ urlpatterns = [
     path('employees/', views.company_employees, name='company-employees'),
 
     path('products/stock/', views.products_on_stock, name='products-stock'),
+    path('sales/statistics/', views.sales_statistics, name='sales-statistics'),
+
+    path('', include(router.urls)),
 ]

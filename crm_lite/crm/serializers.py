@@ -223,3 +223,176 @@ class AddEmployeeSerializer(serializers.Serializer):
         except User.DoesNotExist:
             raise serializers.ValidationError("Пользователь с таким email не найден")
         return value
+
+
+class ProductSaleCreateSerializer(serializers.Serializer):
+    """Сериализатор для товаров в продаже при создании"""
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class SaleCreateSerializer(serializers.ModelSerializer):
+    """Сериализатор для создания продажи"""
+    product_sales = ProductSaleCreateSerializer(many=True, write_only=True)
+
+    class Meta:
+        model = Sale
+        fields = ('buyer_name', 'sale_date', 'discount', 'product_sales')
+        extra_kwargs = {
+            'sale_date': {'required': False}
+        }
+
+    def validate(self, data):
+        user = self.context['request'].user
+        company = user.company
+
+        if not company:
+            raise serializers.ValidationError("Пользователь не привязан к компании")
+
+        # Проверяем наличие товаров на складе
+        product_sales_data = data.get('product_sales', [])
+        errors = {}
+
+        for item in product_sales_data:
+            try:
+                product = Product.objects.get(
+                    id=item['product_id'],
+                    storage__company=company
+                )
+
+                if product.quantity < item['quantity']:
+                    errors[product.name] = f"В наличии только {product.quantity} шт."
+
+            except Product.DoesNotExist:
+                errors[f"product_{item['product_id']}"] = "Товар не найден в вашей компании"
+
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        return data
+
+    def create(self, validated_data):
+        product_sales_data = validated_data.pop('product_sales')
+        user = self.context['request'].user
+        company = user.company
+
+        with transaction.atomic():
+            # Создаем продажу
+            sale = Sale.objects.create(
+                company=company,
+                created_by=user,
+                **validated_data
+            )
+
+            # Создаем записи в ProductSale и уменьшаем количество товаров
+            for item in product_sales_data:
+                product = Product.objects.get(id=item['product_id'])
+
+                ProductSale.objects.create(
+                    sale=sale,
+                    product=product,
+                    quantity=item['quantity'],
+                    sale_price=product.sale_price
+                )
+
+                # Уменьшаем количество товара на складе
+                product.quantity -= item['quantity']
+                if product.quantity < 0:
+                    product.quantity = 0
+                product.save()
+
+        return sale
+
+
+class ProductSaleDetailSerializer(serializers.ModelSerializer):
+    """Сериализатор для товаров в детальной информации о продаже"""
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_sku = serializers.CharField(source='product.sku', read_only=True)
+    total_price = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductSale
+        fields = ('product', 'product_name', 'product_sku',
+                  'quantity', 'sale_price', 'total_price')
+
+    def get_total_price(self, obj):
+        return obj.total_price()
+
+
+class SaleListSerializer(serializers.ModelSerializer):
+    """Сериализатор для списка продаж"""
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    total_amount = serializers.SerializerMethodField()
+    final_amount = serializers.SerializerMethodField()
+    profit = serializers.SerializerMethodField()
+    product_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Sale
+        fields = ('id', 'buyer_name', 'sale_date', 'created_by', 'created_by_name',
+                  'discount', 'total_amount', 'final_amount', 'profit',
+                  'product_count', 'created_at')
+
+    def get_total_amount(self, obj):
+        return obj.total_amount()
+
+    def get_final_amount(self, obj):
+        return obj.final_amount()
+
+    def get_profit(self, obj):
+        return obj.profit()
+
+    def get_product_count(self, obj):
+        return obj.productsale_set.count()
+
+class SaleDetailSerializer(serializers.ModelSerializer):
+    """Сериализатор для детальной информации о продаже"""
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    total_amount = serializers.SerializerMethodField()
+    final_amount = serializers.SerializerMethodField()
+    discount_amount = serializers.SerializerMethodField()
+    profit = serializers.SerializerMethodField()
+    products = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Sale
+        fields = ('id', 'company', 'buyer_name', 'sale_date', 'created_by',
+                 'created_by_name', 'discount', 'total_amount', 'discount_amount',
+                 'final_amount', 'profit', 'products', 'created_at')
+
+    def get_total_amount(self, obj):
+        return obj.total_amount()
+
+    def get_discount_amount(self, obj):
+        return obj.discount_amount()
+
+    def get_final_amount(self, obj):
+        return obj.final_amount()
+
+    def get_profit(self, obj):
+        return obj.profit()
+
+    def get_products(self, obj):
+        product_sales = ProductSale.objects.filter(sale=obj)
+        serializer = ProductSaleDetailSerializer(product_sales, many=True)
+        return serializer.data
+
+class SaleUpdateSerializer(serializers.ModelSerializer):
+    """Сериализатор для обновления продажи (только buyer_name и sale_date)"""
+    class Meta:
+        model = Sale
+        fields = ('buyer_name', 'sale_date')
+
+    def validate(self, data):
+        # Запрещаем изменение количества товаров
+        if 'product_sales' in self.initial_data:
+            raise serializers.ValidationError(
+                "Изменение количества товаров запрещено. "
+                "Для изменения количества товаров отмените продажу и создайте новую."
+            )
+        return data
+
+class SaleFilterSerializer(serializers.Serializer):
+    """Сериализатор для фильтрации продаж по дате"""
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
